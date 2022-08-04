@@ -1,0 +1,136 @@
+version: "3.9"
+services:
+  # VISUALIZER
+  visualizer:
+    image: dockersamples/visualizer
+    ports:
+      - "8080:8080"
+    stop_grace_period: 1m30s
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    networks:
+      - test
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+
+  # BACKEND
+  backend_service:
+    image: backend_image
+    ports:
+      - "5000:5000"
+    command: >
+      gunicorn -c "python:config.gunicorn" --reload "app:app"
+    env_file:
+      - ".env.api"
+    networks:
+      - test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:backend_port/api"]
+      interval: 1m30s
+      timeout: 30s
+      retries: 5
+      start_period: 5m
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        failure_action: rollback
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+      placement:
+        constraints: [node.role == manager]
+
+
+  # FRONTEND
+  frontend_service:
+    image: frontend_image
+    ports:
+      - "frontend_port:frontend_port"
+    env_file:
+      - ".env"
+    networks:
+      - test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:frontend_port"]
+      interval: 1m30s
+      timeout: 30s
+      retries: 5
+      start_period: 2m
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        failure_action: rollback
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+        # delay: 10s
+      placement:
+        constraints: [node.role == manager]
+
+
+
+  # NGINX LETENCRYPY
+  web_server:
+    image: nginx:alpine 
+    # build:
+    #   context: ./nginx
+    #   dockerfile: Dockerfile
+    networks:
+      - test
+    command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt
+      - /var/lib/letsencrypt/webroot:/var/lib/letsencrypt/webroot
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 1m30s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+    deploy:
+        replicas: 2
+        update_config:
+            parallelism: 1
+            failure_action: rollback
+            order: start-first
+        restart_policy:
+            condition: on-failure
+            delay: 10s
+            max_attempts: 20
+        placement:
+            constraints: [node.role == manager]
+
+  certbot:
+    image: certbot/certbot
+    networks:
+      - test
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt
+      - /var/lib/letsencrypt/webroot:/var/lib/letsencrypt/webroot
+    deploy:
+        replicas: 1
+        update_config:
+            parallelism: 1
+            failure_action: rollback
+            order: start-first
+        restart_policy:
+            condition: on-failure
+            delay: 10s
+            max_attempts: 5
+        placement:
+            constraints: [node.role == manager]
+
+networks:
+  test:
+    driver: overlay
